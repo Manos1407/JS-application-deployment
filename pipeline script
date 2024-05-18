@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_CREDENTIAL_ID = 'a73ba141-1e81-4888-80ae-fdd4c3e156bf'
+        DOCKER_HUB_USERNAME = 'manos1407'
+        TAG = 'latest'
+    }
+    
+    stages {
+        stage('Pull Docker Container') {
+            steps {
+                script {
+                    def imageExists = sh(script: "docker images -q myserver:${TAG}", returnStatus: true) == 0 ||
+                                      sh(script: "docker images -q dev:${TAG}", returnStatus: true) == 0 ||
+                                      sh(script: "docker images -q prod:${TAG}", returnStatus: true) == 0
+                                      
+                    if (!imageExists) {
+                        sh "docker pull manos1407/myserver:${TAG}"
+                    }
+                }
+            }
+        }
+        
+        stage('Pull Git Master Branch') {
+            steps {
+                git branch: 'master', credentialsId: 'gitlogin', url: 'https://github.com/Manos1407/capstone.git'
+            }
+        }
+        
+        stage('Build and Push Dev or Prod Docker Image') {
+            steps {
+                script {
+                    def currentBranch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    def currentCommit = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    def devCommit = sh(script: 'git rev-parse origin/dev', returnStdout: true).trim()
+                    def masterCommit = sh(script: 'git rev-parse origin/master', returnStdout: true).trim()
+                    
+                    def tag = "latest"
+                    
+                    if (currentBranch == 'dev' && currentCommit != devCommit) {
+                        // Stop and remove the existing container if it exists
+                        sh "docker stop mycapstone_app || true"
+                        sh "docker rm mycapstone_app || true"
+                        
+                        // Build and push Dev Docker image
+                        sh "docker build -t dev:${TAG} ."
+                        withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIAL_ID, usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            sh "docker login -u ${DOCKER_HUB_USERNAME} -p ${DOCKER_PASSWORD}" // Logging into Docker Hub
+                            sh "docker tag dev:${TAG} ${DOCKER_HUB_USERNAME}/dev:${TAG}"
+                            sh "docker push ${DOCKER_HUB_USERNAME}/dev:${TAG}"
+                        }
+                        echo 'Dev image is built and pushed to Docker Hub.'
+                        // Run the container after pushing
+                        sh "docker run --name dev -d -p 80:80 ${DOCKER_HUB_USERNAME}/dev:${TAG}"
+                        echo 'App is running.'
+                    } else if ((currentBranch == 'dev' && currentCommit == devCommit) || (currentBranch == 'master' && (currentCommit == masterCommit || sh(script: 'git merge-base --is-ancestor origin/dev origin/master', returnStatus: true) == 0))) {
+                        // Stop and remove the existing container if it exists
+                        sh "docker stop mycapstone_app || true"
+                        sh "docker rm mycapstone_app || true"
+                        
+                        // Build and push Prod Docker image
+                        sh "docker build -t prod:${TAG} ."
+                        withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIAL_ID, usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            sh "docker login -u ${DOCKER_HUB_USERNAME} -p ${DOCKER_PASSWORD}" // Logging into Docker Hub
+                            sh "docker tag prod:${TAG} ${DOCKER_HUB_USERNAME}/prod:${TAG}"
+                            sh "docker push ${DOCKER_HUB_USERNAME}/prod:${TAG}"
+                        }
+                        echo 'Prod image is built and pushed to Docker Hub.'
+                        // Run the container after pushing
+                        sh "docker run --name prod -d -p 80:80 ${DOCKER_HUB_USERNAME}/prod:${TAG}"
+                        echo 'App is running.'
+                    } else {
+                        echo 'No need to build and push Docker image.'
+                    }
+                }
+            }
+        }
+    }
+}
