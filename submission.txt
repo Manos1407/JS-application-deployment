@@ -1,0 +1,4 @@
+Git repo URL: https://github.com/Manos1407/capstone.git
+Deploy site URL: http://65.0.129.1/ (public IP of the instance since for url Elastic ip required it may generate charges)
+docker image name: manos1407/prod:latest
+                   manos1407/dev:latest (according to docker repo)
